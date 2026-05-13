@@ -1,5 +1,5 @@
 # 🧠 Payload Brain
-A vector database + MCP server for Payload CMS v3 that gives your AI coding assistant perfect, zero-hallucination knowledge of Payload v3's documentation, Next.js App Router standards, and hook implementations.
+A vector database + MCP server for Payload CMS v3 that gives your AI coding assistant, zero-hallucination knowledge of Payload v3's documentation, Next.js App Router standards, and hook implementations.
 
 ## Features
 - **Zero-Hallucination**: Pulls official Payload v3 documentation directly from GitHub.
