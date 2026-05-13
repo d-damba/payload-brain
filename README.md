@@ -12,7 +12,7 @@ A vector database + MCP server for Payload CMS v3 that gives your AI coding assi
 
 ### 1. Clone & Setup
 ```bash
-git clone https://github.com/your-username/payload-brain.git
+git clone https://github.com/d-damba/payload-brain.git
 cd payload-brain
 node setup.js
 ```
