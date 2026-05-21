@@ -1,6 +1,7 @@
 node_modules/
 .env
 .mcp.json
+.claude/
 docs/
 skills/
 test-search.js

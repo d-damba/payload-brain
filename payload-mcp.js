@@ -151,10 +151,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
 
   } catch (err) {
-    console.error("Hybrid search error:", err);
+    const msg = err?.message || String(err);
+    const isAuth = err?.status === 401 || /api key|invalid key|unauthorized/i.test(msg);
+    const isNetwork = /fetch|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(msg);
+
+    const warning = isAuth
+      ? "Authentication failed. Verify OPENAI_API_KEY and SUPABASE_SERVICE_KEY in .env."
+      : isNetwork
+        ? "Could not reach search service. Check your network connection and SUPABASE_URL in .env."
+        : "Search service encountered an unexpected error. Please try again or re-run the ingest.";
+
+    console.error(`[search] error type=${isAuth ? 'auth' : isNetwork ? 'network' : 'unknown'} message=${msg}`);
+
     return {
-      content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
-      isError: true
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          diagnostics: {
+            query_mode: mode,
+            confidence: "LOW",
+            warning
+          },
+          results: []
+        }, null, 2)
+      }]
     };
   }
 });
