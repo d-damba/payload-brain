@@ -5,6 +5,9 @@ A vector database + MCP server for Payload CMS v3 that gives your AI coding assi
 - **Zero-Hallucination**: Pulls official Payload v3 documentation directly from GitHub.
 - **Hybrid Search (RRF)**: Uses Supabase pgvector and Full-Text Search to find exact syntax and conceptual matches.
 - **Context-Aware**: Automatically fetches adjacent markdown chunks to give the AI the full context of a page.
+- **Token-Efficient**: A `concise` search mode trims each result to a fence-aware cap (never cutting a code block) with a marker to fetch the full section on demand, and the response payload is kept lean — cutting the tokens spent per query without losing the canonical example.
+- **Smart Chunking**: Ingestion bounds chunk size, strips MDX frontmatter/imports, and splits large option-reference tables on row boundaries (repeating the header on each fragment) — so embeddings stay focused and retrieval lands on the exact option you asked about.
+- **Cached**: An in-memory LRU cache stores embeddings and search results for the server's lifetime, so repeated queries skip the OpenAI and Supabase round-trips entirely (sub-10ms warm hits). Re-run `ingest.js`? Just restart the server to refresh.
 - **100% Private**: Bring your own Supabase instance and OpenAI key. Your queries stay entirely yours.
 - **Customizable**: Easily modify `ingest.js` to ingest your own internal company wikis or proprietary UI components.
 
