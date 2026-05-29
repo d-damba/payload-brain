@@ -85,6 +85,42 @@ function splitIntoBlocks(text) {
   return blocks.map(b => b.trim()).filter(Boolean);
 }
 
+const isTableLine = (line) => /^\s*\|/.test(line);
+// A separator row is the |---|---| line under a table header: only pipes,
+// dashes, colons and whitespace.
+const isSeparatorLine = (line) => /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes('-');
+
+// A block is a splittable table if it's mostly pipe rows and has a separator.
+function isTableBlock(block) {
+  const lines = block.split('\n').filter(l => l.trim());
+  if (lines.length < 3 || !lines.some(isSeparatorLine)) return false;
+  return lines.filter(isTableLine).length / lines.length > 0.8;
+}
+
+// Split an oversized markdown table into row-groups under the cap, repeating the
+// header + separator rows on each group so every fragment stays self-describing.
+// A single row larger than the cap is kept whole (a table row can't be split).
+function splitTable(block) {
+  const lines = block.split('\n');
+  const sepIdx = lines.findIndex(isSeparatorLine);
+  if (sepIdx < 1) return [block]; // malformed/headerless — leave intact
+
+  const header = lines.slice(0, sepIdx + 1).join('\n');
+  const rows = lines.slice(sepIdx + 1).filter(l => l.trim());
+
+  const groups = [];
+  let current = header;
+  for (const row of rows) {
+    if (current !== header && current.length + row.length + 1 > MAX_CHUNK_LENGTH) {
+      groups.push(current);
+      current = header;
+    }
+    current += '\n' + row;
+  }
+  if (current !== header) groups.push(current);
+  return groups.length ? groups : [block];
+}
+
 // Sub-split an oversized section into <= MAX_CHUNK_LENGTH pieces on block
 // boundaries (never mid-fence). The section's heading is re-prepended to each
 // follow-on piece so orphaned sub-chunks keep their context. A single code
@@ -95,9 +131,16 @@ function splitOversized(section) {
   const headingMatch = section.match(/^#{1,6}\s.*$/m);
   const heading = headingMatch ? headingMatch[0].trim() : '';
 
+  // Expand any oversized table into header-carrying row-groups before packing.
+  const blocks = [];
+  for (const block of splitIntoBlocks(section)) {
+    if (block.length > MAX_CHUNK_LENGTH && isTableBlock(block)) blocks.push(...splitTable(block));
+    else blocks.push(block);
+  }
+
   const pieces = [];
   let current = '';
-  for (const block of splitIntoBlocks(section)) {
+  for (const block of blocks) {
     if (current && current.length + block.length + 2 > MAX_CHUNK_LENGTH) {
       pieces.push(current.trim());
       current = heading && !block.startsWith('#') ? heading + '\n\n' : '';
@@ -238,7 +281,7 @@ async function runIngestion() {
     console.warn(`\n⚠️ SKIPPING CLEANUP: ${chunkFailures} chunk(s) failed across ${filesToProcess.length - succeeded} unfinished file(s). Preserving old records to prevent data loss.`);
   }
 
-  console.log(`\\n✅ INGESTION COMPLETE!`);
+  console.log(`\n✅ INGESTION COMPLETE!`);
   console.log(`Files Processed: ${succeeded}/${filesToProcess.length}`);
   console.log(`Total Chunks Stored: ${chunksStored}${chunkFailures ? ` (${chunkFailures} failed)` : ''}`);
 }

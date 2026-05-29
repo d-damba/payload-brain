@@ -89,6 +89,28 @@ check('follow-on pieces re-prepend the heading', pieces.slice(1).every(p => p.st
 check('under-cap section is returned untouched',
   splitOversized('### tiny\n\nshort body').length === 1);
 
+// ── splitOversized: large option table ────────────────────────────────────────
+console.log('\n📊 splitOversized (markdown table)');
+const tableRows = Array.from({ length: 20 }, (_, i) =>
+  `| \`option${i}\` | ${'a fairly long description of what this option does. '.repeat(2)} |`);
+const tableSection = [
+  '## Config Options',
+  '',
+  '| Option | Description |',
+  '| ------ | ----------- |',
+  ...tableRows,
+].join('\n');
+check('table fixture exceeds the cap', tableSection.length > 1200, `${tableSection.length} chars`);
+const tablePieces = splitOversized(tableSection);
+check('oversized table splits into multiple fragments', tablePieces.length > 1, `${tablePieces.length}`);
+check('every fragment repeats the header + separator row',
+  tablePieces.every(p => p.includes('| Option | Description |') && /\|\s*-{3,}/.test(p)),
+  tablePieces.map((p, i) => `#${i}:${p.includes('| ------') ? 'ok' : 'NO-HEADER'}`).join(' '));
+check('every fragment stays near the cap (≤1300)',
+  tablePieces.every(p => p.length <= 1300), tablePieces.map(p => p.length).join(','));
+check('no table row is duplicated across fragments',
+  tablePieces.reduce((n, p) => n + (p.match(/\| `option\d+`/g) || []).length, 0) === 20);
+
 // ── processFile against the real offending doc ─────────────────────────────────
 console.log('\n📄 processFile on docs/hooks/context.mdx');
 const real = processFile(path.join(__dirname, 'docs/hooks/context.mdx'), path.join(__dirname, 'docs'), 'payload/docs');
