@@ -125,6 +125,14 @@ function splitTable(block) {
 // boundaries (never mid-fence). The section's heading is re-prepended to each
 // follow-on piece so orphaned sub-chunks keep their context. A single code
 // block larger than the cap is kept intact rather than broken.
+//
+// NOTE (someday, only if retrieval feels off): when a section is prose-then-code,
+// the explanatory prose stays in the first piece, leaving follow-on code-only
+// pieces semantically "thin" — they lean on the re-prepended heading alone for
+// embedding signal, so they can rank below the prose-rich piece (observed with
+// the "Preventing Infinite Loops" bad/good examples). Adjacency currently rescues
+// this. A future enhancement could carry one lead sentence of prose into each
+// code-only follow-on piece so it embeds with more signal. Not an action item.
 function splitOversized(section) {
   if (section.length <= MAX_CHUNK_LENGTH) return [section];
 
