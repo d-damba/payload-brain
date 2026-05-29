@@ -19,4 +19,17 @@ When calling search_payload_docs, you MUST strictly inspect the diagnostics.conf
 
 If LOW: You are strictly forbidden from writing code or falling back to internal knowledge. You must immediately stop and inform the user that the feature does not exist or requires a different search query.
 
-If MARGINAL: This indicates a semantic match but an exact keyword miss. You must carefully read the returned chunk content. If the content explicitly answers the user's intent, proceed. If the content is generalized or unrelated (e.g., retrieving high-level overview docs for a highly specific technical query), you must stop and ask the user to clarify or confirm the feature exists in v3.
+If MARGINAL: This indicates a semantic match but an exact keyword miss. You must carefully read the returned chunk content. If the content explicitly answers the user's intent, proceed. If the content is generalized or unrelated (e.g., retrieving high-level overview docs for a highly specific technical query), you must stop and ask the user to clarify or confirm the feature exists in v3
+
+## Coding Behavior
+
+**Think before coding:** State assumptions explicitly. If multiple interpretations exist, present them — don't pick silently. If a simpler approach exists, say so and push back when warranted. If something is unclear, stop and ask. Name what's confusing.
+
+**Simplicity First (Zero Bloat):** Write the minimum code necessary to solve the problem.
+* No features beyond what was asked.
+* No abstractions for single-use code.
+* No "flexibility" or "configurability" that wasn't explicitly requested.
+* Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify. If you write 200 lines and it could be 50, rewrite it.
+
+**Surgical changes:** Touch only what the task requires. Don't improve adjacent code, refactor things that aren't broken, or clean up pre-existing dead code unless asked. Every changed line should trace directly to the request.
+* *Clean your own mess:* If your specific changes create orphans, you MUST remove the imports, variables, or functions that YOUR changes made unused.
