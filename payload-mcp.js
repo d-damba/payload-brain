@@ -63,6 +63,56 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   }]
 }));
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+const CONCISE_CAP = 800;
+const TRUNCATION_MARKER = '\n\n[Truncated — call again with mode:"full" for the complete section.]';
+
+// Truncate a chunk to ~CONCISE_CAP chars without ever cutting inside a code
+// fence. If the cap lands mid-fence, extend to the closing ``` so examples stay
+// whole. Returns the chunk untouched if it's already under the cap.
+function toConcise(content) {
+  if (content.length <= CONCISE_CAP) return content;
+
+  let cut = CONCISE_CAP;
+  const fencesBeforeCut = (content.slice(0, cut).match(/```/g) || []).length;
+
+  // Odd count means the cap landed inside an open code fence — extend to its close.
+  if (fencesBeforeCut % 2 === 1) {
+    const close = content.indexOf('```', cut);
+    cut = close === -1 ? content.length : close + 3;
+  }
+
+  // If the fence extension swallowed the whole chunk, nothing is actually
+  // truncated — return it as-is rather than appending a marker (which would
+  // make the "concise" result longer than "full").
+  if (cut >= content.length) return content;
+
+  return content.slice(0, cut).trimEnd() + TRUNCATION_MARKER;
+}
+
+// In-memory caches. The docs are static for the server's lifetime, so no TTL —
+// re-running ingest requires a server restart to clear these (see README).
+// Map preserves insertion order, giving us LRU eviction for free: read refreshes
+// recency, overflow evicts the oldest key. Bound is just a memory backstop.
+const CACHE_MAX = 300;
+const embeddingCache = new Map(); // semantic_intent -> embedding string "[...]"
+const resultCache = new Map();    // query signature  -> raw rows from the RPC
+
+function cacheGet(cache, key) {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key);
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function cacheSet(cache, key, value) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+}
+
 // ── Tool Execution ──────────────────────────────────────────────────────────
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -79,21 +129,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const finalLimit = Math.max(1, Math.min(Number(args.limit) || 5, 15));
 
   try {
-    const embeddingResponse = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: semanticIntent,
-    });
-    const query_embedding = embeddingResponse.data[0].embedding;
+    // Result cache is keyed on everything that changes the rows (not mode —
+    // mode only affects formatting, applied below on cached rows just the same).
+    const resultKey = `${keywords}::${category}::${finalLimit}::${semanticIntent}`;
+    let data = cacheGet(resultCache, resultKey);
 
-    const { data, error } = await supabase.rpc("match_payload_docs", {
-      query_text: keywords,
-      query_embedding: `[${query_embedding.join(',')}]`,
-      match_threshold: 0.0, 
-      match_count: finalLimit,
-      filter_category: category
-    });
+    if (data === undefined) {
+      // Embedding cache keyed on intent alone, so it still hits when the same
+      // intent is paired with different keywords/category/limit (a cache miss
+      // on resultKey). This is the only call that costs money on a repeat.
+      let query_embedding = cacheGet(embeddingCache, semanticIntent);
+      if (query_embedding === undefined) {
+        const embeddingResponse = await openai.embeddings.create({
+          model: "text-embedding-3-small",
+          input: semanticIntent,
+        });
+        query_embedding = `[${embeddingResponse.data[0].embedding.join(',')}]`;
+        cacheSet(embeddingCache, semanticIntent, query_embedding);
+      }
 
-    if (error) throw error;
+      const { data: rows, error } = await supabase.rpc("match_payload_docs", {
+        query_text: keywords,
+        query_embedding,
+        match_threshold: 0.0,
+        match_count: finalLimit,
+        filter_category: category
+      });
+
+      if (error) throw error;
+
+      data = rows || [];
+      cacheSet(resultCache, resultKey, data);
+    }
 
     if (!data || data.length === 0) {
       console.error(`[search] keywords="${keywords}" intent="${semanticIntent}" results=0`);
@@ -106,9 +173,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               confidence: "LOW",
               warning: "No relevant documentation found. Please reformulate with broader keywords or exact field/hook names."
             },
-            results: [] 
-          }, null, 2) 
-        }] 
+            results: []
+          })
+        }]
       };
     }
 
@@ -134,20 +201,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       results: data.map(doc => ({
         url: doc.url,
         category: doc.category,
-        scoring: {
-          rrf: parseFloat(doc.rrf_score.toFixed(4)),
-          fts_rank: doc.fts_rank || "miss",
-          vector_rank: doc.vector_rank || "miss"
-        },
-        content: doc.content,
-        metadata: doc.payload
+        content: mode === 'concise' ? toConcise(doc.content) : doc.content
       }))
     };
 
     console.error(`[search] mode="${mode}" keywords="${keywords}" confidence="${responsePayload.diagnostics.confidence}" top_rrf=${topScore.toFixed(4)} results=${data.length}`);
 
     return {
-      content: [{ type: "text", text: JSON.stringify(responsePayload, null, 2) }]
+      content: [{ type: "text", text: JSON.stringify(responsePayload) }]
     };
 
   } catch (err) {
@@ -173,7 +234,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             warning
           },
           results: []
-        }, null, 2)
+        })
       }]
     };
   }

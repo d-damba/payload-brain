@@ -34,6 +34,7 @@ Populate your Supabase database with the latest Payload v3 documentation.
 ```bash
 node ingest.js
 ```
+> **Note:** The MCP server caches search results in memory for the lifetime of the process. If you re-run `node ingest.js` to refresh the docs, **restart the MCP server** afterward so it picks up the new data.
 
 ### 5. Hook Up Your IDE
 Now that your database is populated, point your IDE to the MCP server to give the AI access to the `search_payload_docs` tool. However you set up MCP servers in your IDE, just point the command to `node` and the argument to the absolute path of `payload-mcp.js`.

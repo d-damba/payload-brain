@@ -1,6 +1,6 @@
 {
   "name": "payload-brain",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local vector database ingestion for Payload CMS v3 documentation",
   "main": "ingest.js",
   "scripts": {
