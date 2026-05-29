@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-29
+
+### Changed
+- **Ingest now bounds chunk size.** After the primary `##`/`###` header split, any section over ~1,200 chars is sub-split on blank-line boundaries (never inside a code fence), with the section heading re-prepended to each follow-on piece. This keeps chunks at a healthy embedding size and tends to separate anti-patterns from canonical examples — mitigating (not eliminating) the concise-truncation limitation noted in 1.1.0. **Requires re-running `node ingest.js`.**
+
+### Added
+- `cleanMdx` strips leading YAML frontmatter and preamble `import`/`export` statements (before the first heading) so MDX boilerplate no longer pollutes embeddings or returned content; imports inside code fences are preserved.
+- Chunking helpers (`cleanMdx`, `splitIntoBlocks`, `splitOversized`, `processFile`) are exported and `ingest.js` only auto-runs when invoked directly, so they can be unit-tested without triggering ingestion.
+- `test-ingest.js` — network-free unit tests for the chunking helpers (fence safety, frontmatter stripping, oversize splitting, validation against a real doc).
+
+### Fixed
+- Stale-data cleanup is now gated on **zero chunk-level failures**, not just file completion. Previously a file with failed chunk embeddings still counted as "succeeded," which could let cleanup delete the old rows those failed chunks should have replaced — leaving silent gaps.
+
 ## [1.1.0] - 2026-05-29
 
 ### Added

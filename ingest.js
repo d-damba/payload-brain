@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import * as dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import fs from 'fs';
 
 // ── Bulletproof .env Loading ────────────────────────────────────────────────
@@ -29,6 +29,7 @@ const TARGET_DIRS = [
 ];
 
 const MIN_CONTENT_LENGTH = 50;
+const MAX_CHUNK_LENGTH = 1200; // sections longer than this are sub-split on safe boundaries
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
@@ -49,8 +50,72 @@ function getMdxFiles(dir, fileList = []) {
 
 // ── Content Parsing & Chunking ──────────────────────────────────────────────
 
+// Strip a leading YAML frontmatter block and the MDX import/export statements
+// that sit in the preamble (before the first Markdown heading). Code examples
+// live after headings inside fences, so their imports are left untouched.
+function cleanMdx(content) {
+  let text = content.replace(/^﻿?\s*---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+
+  const firstHeading = text.search(/^#{1,6}\s/m);
+  if (firstHeading === -1) return text.trim();
+
+  const head = text.slice(0, firstHeading).replace(/^\s*(import|export)\s.*$/gm, '');
+  return (head + text.slice(firstHeading)).trim();
+}
+
+// Split text into atomic blocks on blank lines, treating fenced code blocks as
+// indivisible so a ``` fence is never broken across blocks.
+function splitIntoBlocks(text) {
+  const blocks = [];
+  let buf = [];
+  let inFence = false;
+  const flush = () => { if (buf.length) { blocks.push(buf.join('\n')); buf = []; } };
+
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      buf.push(line);
+    } else if (!inFence && line.trim() === '') {
+      flush();
+    } else {
+      buf.push(line);
+    }
+  }
+  flush();
+  return blocks.map(b => b.trim()).filter(Boolean);
+}
+
+// Sub-split an oversized section into <= MAX_CHUNK_LENGTH pieces on block
+// boundaries (never mid-fence). The section's heading is re-prepended to each
+// follow-on piece so orphaned sub-chunks keep their context. A single code
+// block larger than the cap is kept intact rather than broken.
+function splitOversized(section) {
+  if (section.length <= MAX_CHUNK_LENGTH) return [section];
+
+  const headingMatch = section.match(/^#{1,6}\s.*$/m);
+  const heading = headingMatch ? headingMatch[0].trim() : '';
+
+  const pieces = [];
+  let current = '';
+  for (const block of splitIntoBlocks(section)) {
+    if (current && current.length + block.length + 2 > MAX_CHUNK_LENGTH) {
+      pieces.push(current.trim());
+      current = heading && !block.startsWith('#') ? heading + '\n\n' : '';
+    }
+    current += (current ? '\n\n' : '') + block;
+  }
+  if (current.trim()) pieces.push(current.trim());
+
+  // Merge a runt tail back into the previous piece rather than emit/drop it.
+  if (pieces.length > 1 && pieces[pieces.length - 1].length < MIN_CONTENT_LENGTH) {
+    pieces[pieces.length - 2] += '\n\n' + pieces.pop();
+  }
+
+  return pieces;
+}
+
 function processFile(filePath, baseDir, prefix) {
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = cleanMdx(fs.readFileSync(filePath, 'utf-8'));
 
   const relativePath = path.relative(baseDir, filePath);
   const url = `${prefix}/${relativePath.replace(/\\/g, '/')}`;
@@ -58,23 +123,26 @@ function processFile(filePath, baseDir, prefix) {
   // If it comes from skills, label the category as 'skills'. Otherwise, use the folder name.
   const category = prefix.includes('skills') ? 'skills' : (relativePath.split(path.sep)[0] || 'general');
 
-  // Split the MDX document into chunks based on Markdown headers (## or ###)
-  const rawChunks = content.split(/(?=^##\s|^###\s)/m);
+  // Primary split on Markdown headers (## or ###), then bound section size.
+  const sections = content.split(/(?=^##\s|^###\s)/m);
 
   const chunks = [];
   let chunkIndex = 0;
 
-  for (let text of rawChunks) {
-    text = text.trim();
-    if (text.length < MIN_CONTENT_LENGTH) continue;
+  for (let section of sections) {
+    section = section.trim();
+    if (section.length < MIN_CONTENT_LENGTH) continue;
 
-    chunks.push({
-      url,
-      chunk_index: chunkIndex++,
-      category,
-      content: text,
-      payload: { source_file: relativePath } // Storing filepath in the JSON payload
-    });
+    for (const piece of splitOversized(section)) {
+      if (piece.length < MIN_CONTENT_LENGTH) continue;
+      chunks.push({
+        url,
+        chunk_index: chunkIndex++,
+        category,
+        content: piece,
+        payload: { source_file: relativePath } // Storing filepath in the JSON payload
+      });
+    }
   }
 
   return chunks;
@@ -143,6 +211,7 @@ async function runIngestion() {
   let processed = 0;
   let succeeded = 0;
   let chunksStored = 0;
+  let chunkFailures = 0;
 
   await Promise.all(filesToProcess.map(fileObj => limit(async () => {
     // Pass the baseDir so the script can accurately calculate the relative path category
@@ -150,6 +219,7 @@ async function runIngestion() {
     if (chunks && chunks.length > 0) {
       for (const chunk of chunks) {
         if (await embedAndStore(chunk)) chunksStored++;
+        else chunkFailures++;
       }
       succeeded++;
     }
@@ -157,18 +227,26 @@ async function runIngestion() {
     if (processed % 10 === 0) console.log(`   📊 Progress: ${processed}/${filesToProcess.length} files (${chunksStored} chunks stored)`);
   })));
 
-  // Cleanup old records not in this batch
-  if (succeeded === filesToProcess.length) {
+  // Cleanup old records not in this batch — only when EVERY chunk stored
+  // successfully. Gating on files alone would let a file with failed chunks
+  // count as "done" and delete the old rows those chunks should have replaced.
+  if (chunkFailures === 0 && succeeded === filesToProcess.length) {
     console.log(`\n🧹 Ingestion 100% successful. Cleaning up stale data...`);
     const { error: deleteError } = await supabase.from('payload_docs').delete().neq('sync_batch_id', BATCH_ID);
     if (deleteError) console.error("⚠️ Cleanup failed:", deleteError.message);
   } else {
-    console.warn(`\n⚠️ SKIPPING CLEANUP: ${filesToProcess.length - succeeded} files failed to process. Preserving old records to prevent data loss.`);
+    console.warn(`\n⚠️ SKIPPING CLEANUP: ${chunkFailures} chunk(s) failed across ${filesToProcess.length - succeeded} unfinished file(s). Preserving old records to prevent data loss.`);
   }
 
   console.log(`\\n✅ INGESTION COMPLETE!`);
   console.log(`Files Processed: ${succeeded}/${filesToProcess.length}`);
-  console.log(`Total Chunks Stored: ${chunksStored}`);
+  console.log(`Total Chunks Stored: ${chunksStored}${chunkFailures ? ` (${chunkFailures} failed)` : ''}`);
 }
 
-runIngestion();
+// Only run the pipeline when invoked directly (`node ingest.js`), so the pure
+// chunking helpers above can be imported by tests without triggering ingestion.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runIngestion();
+}
+
+export { cleanMdx, splitIntoBlocks, splitOversized, processFile };
