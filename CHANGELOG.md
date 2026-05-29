@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-29
+
+### Fixed
+- `toConcise` could return a result slightly **longer** than the original chunk when the fence extension landed near the end and the dropped tail was shorter than the escalation marker. It now returns the truncated form only when it's actually shorter, otherwise falls back to the full content. (Surfaced by a boundary road-test.)
+
+### Added
+- `toConcise` is exported from `payload-mcp.js` behind a main-module guard, so it can be unit-tested directly without booting the server. `test-truncation.js` rebuilt as a real regression test against the exported function (boundary cases + the never-longer-than-original guard).
+
 ## [1.2.0] - 2026-05-29
 
 ### Changed

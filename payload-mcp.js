@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env'), quiet: true });
 
@@ -88,7 +88,11 @@ function toConcise(content) {
   // make the "concise" result longer than "full").
   if (cut >= content.length) return content;
 
-  return content.slice(0, cut).trimEnd() + TRUNCATION_MARKER;
+  // Only return the truncated form if it's actually shorter. When the dropped
+  // tail is smaller than the marker itself, the marker would make "concise"
+  // longer than the original — in that case just return the full content.
+  const result = content.slice(0, cut).trimEnd() + TRUNCATION_MARKER;
+  return result.length < content.length ? result : content;
 }
 
 // In-memory caches. The docs are static for the server's lifetime, so no TTL —
@@ -246,10 +250,16 @@ async function run() {
   console.error("Payload Brain (v1.0 API Mode) initialized.");
 }
 
-run().catch(console.error);
+// Only boot the server when run directly (`node payload-mcp.js`), so the pure
+// helpers (e.g. toConcise) can be imported by tests without launching it.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  run().catch(console.error);
 
-process.on('SIGINT', async () => {
-  console.error("\nShutting down Payload Brain...");
-  await server.close();
-  process.exit(0);
-});
+  process.on('SIGINT', async () => {
+    console.error("\nShutting down Payload Brain...");
+    await server.close();
+    process.exit(0);
+  });
+}
+
+export { toConcise };
