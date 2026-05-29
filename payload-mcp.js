@@ -65,6 +65,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+// NOTE (tuning lever): since ingest now bounds chunk size, most chunks already
+// arrive near this cap, so concise does less trimming than it did pre-v1.2.0.
+// If you want to squeeze more tokens, this cap could be lowered (~500) — chunks
+// are small enough and adjacency restores surrounding context. Not needed now.
 const CONCISE_CAP = 800;
 const TRUNCATION_MARKER = '\n\n[Truncated — call again with mode:"full" for the complete section.]';
 

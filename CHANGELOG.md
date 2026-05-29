@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `toConcise` is exported from `payload-mcp.js` behind a main-module guard, so it can be unit-tested directly without booting the server. `test-truncation.js` rebuilt as a real regression test against the exported function (boundary cases + the never-longer-than-original guard).
 
+### Notes
+- Measured the live token impact after the v1.2.x chunking work: with chunks now bounded near the concise cap, `concise` vs `full` is ~15% on a typical query (down from the ~40–55% measured at 1.1.0). The savings didn't shrink — they moved upstream: bounded chunks (1.2.0) mean the server fetches right-sized content instead of fetching oversized chunks and truncating them. All savings levers (compact JSON, slim payload, bounded chunks, caching) remain active; concise truncation is now a safety net for the 800–1,200 tail and large code blocks rather than the primary lever. A possible future squeeze is lowering the concise cap (~500); see the NOTE by `CONCISE_CAP` in `payload-mcp.js`.
+
 ## [1.2.0] - 2026-05-29
 
 ### Changed
